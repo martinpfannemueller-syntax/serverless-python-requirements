@@ -3,6 +3,7 @@ const glob = require('glob-all');
 const JSZip = require('jszip');
 const sha256File = require('sha256-file');
 const tape = require('tape-promise/tape');
+
 const {
   chmodSync,
   removeSync,
@@ -23,7 +24,7 @@ const mkCommand =
   (cmd) =>
   (args, options = {}) => {
     options['env'] = Object.assign(
-      { SLS_DEBUG: 't' },
+      { SLS_DEBUG: 'true' },
       process.env,
       options['env']
     );
@@ -32,11 +33,11 @@ const mkCommand =
       args,
       options
     );
-    if (error) {
+    if (error && !options['noThrow']) {
       console.error(`Error running: ${quote([cmd, ...args])}`); // eslint-disable-line no-console
       throw error;
     }
-    if (status) {
+    if (status && !options['noThrow']) {
       console.error('STDOUT: ', stdout.toString()); // eslint-disable-line no-console
       console.error('STDERR: ', stderr.toString()); // eslint-disable-line no-console
       throw new Error(
@@ -199,6 +200,32 @@ const canUseDocker = () => {
 
 // Skip if running on these platforms.
 const brokenOn = (...platforms) => platforms.indexOf(process.platform) != -1;
+
+test(
+  'dockerPrivateKey option correctly resolves docker command',
+  async (t) => {
+    process.chdir('tests/base');
+    const path = npm(['pack', '../..']);
+    npm(['i', path]);
+    const stdout = sls(['package'], {
+      noThrow: true,
+      env: {
+        dockerizePip: true,
+        dockerSsh: true,
+        dockerPrivateKey: `${__dirname}${sep}tests${sep}base${sep}custom_ssh`,
+        dockerImage: 'break the build to log the command',
+      },
+    });
+    t.true(
+      stdout.includes(
+        `-v ${__dirname}${sep}tests${sep}base${sep}custom_ssh:/root/.ssh/custom_ssh:z`
+      ),
+      'docker command properly resolved'
+    );
+    t.end();
+  },
+  { skip: !canUseDocker() || brokenOn('win32') }
+);
 
 test(
   'default pythonBin can package flask with default options',
@@ -1447,6 +1474,25 @@ test(
       [],
       '__main__.py files are NOT packaged'
     );
+    t.end();
+  },
+  { skip: !hasPython(3.6) }
+);
+
+test(
+  'poetry py3.6 can package flask with package individually option',
+  async (t) => {
+    process.chdir('tests/poetry_individually');
+    const path = npm(['pack', '../..']);
+    npm(['i', path]);
+
+    sls(['package'], { env: {} });
+    const zipfiles = await listZipFiles(
+      '.serverless/module1-sls-py-req-test-dev-hello.zip'
+    );
+    t.true(zipfiles.includes(`flask${sep}__init__.py`), 'flask is packaged');
+    t.true(zipfiles.includes(`bottle.py`), 'bottle is packaged');
+    t.true(zipfiles.includes(`boto3${sep}__init__.py`), 'boto3 is packaged');
     t.end();
   },
   { skip: !hasPython(3.6) }
